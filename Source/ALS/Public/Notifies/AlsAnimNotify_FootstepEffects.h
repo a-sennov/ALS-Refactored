@@ -164,9 +164,6 @@ class ALS_API UAlsAnimNotify_FootstepEffects : public UAnimNotify
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
-	TObjectPtr<UAlsFootstepEffectsSettings> FootstepEffectsSettings;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
 	EAlsFootBone FootBone{EAlsFootBone::Left};
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings|Sound")
@@ -194,6 +191,8 @@ protected:
 	uint8 bSpawnParticleSystem : 1 {true};
 
 public:
+	static FName FootstepNoiseTag;
+
 	virtual FString GetNotifyName_Implementation() const override;
 
 	virtual void Notify(USkeletalMeshComponent* Mesh, UAnimSequenceBase* Animation,
@@ -201,7 +200,7 @@ public:
 
 private:
 	void SpawnSound(USkeletalMeshComponent* Mesh, const FAlsFootstepEffectSettings& EffectSettings,
-	                const FVector& FootstepLocation, const FQuat& FootstepRotation) const;
+	                const FVector& FootstepLocation, const FQuat& FootstepRotation, float VolumeMultiplier) const;
 
 	void SpawnDecal(USkeletalMeshComponent* Mesh, const FAlsFootstepEffectSettings& EffectSettings,
 	                const FVector& FootstepLocation, const FQuat& FootstepRotation,

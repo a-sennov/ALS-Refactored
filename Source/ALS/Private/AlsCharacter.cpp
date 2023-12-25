@@ -655,6 +655,15 @@ void AAlsCharacter::OnRotationModeChanged_Implementation(const FGameplayTag& Pre
 
 void AAlsCharacter::RefreshRotationMode()
 {
+	if (RotationMode == AlsRotationModeTags::Driven) {
+		// Get away from Driven mode only manually
+		if (DesiredRotationMode == RotationMode)
+		{
+			return;
+		}
+		SetRotationMode(DesiredRotationMode);
+	}
+
 	const auto bSprinting{Gait == AlsGaitTags::Sprinting};
 	const auto bAiming{bDesiredAiming || DesiredRotationMode == AlsRotationModeTags::Aiming};
 
@@ -1486,7 +1495,10 @@ void AAlsCharacter::RefreshGroundedRotation(const float DeltaTime)
 	{
 		return;
 	}
-
+	if (RotationMode == AlsRotationModeTags::Driven) 
+	{
+		return;
+	}
 	if (HasAnyRootMotion())
 	{
 		RefreshTargetYawAngleUsingLocomotionRotation();
@@ -1711,7 +1723,10 @@ void AAlsCharacter::RefreshInAirRotation(const float DeltaTime)
 	{
 		return;
 	}
-
+	if (RotationMode == AlsRotationModeTags::Driven)
+	{
+		return;
+	}
 	if (RefreshCustomInAirRotation(DeltaTime))
 	{
 		return;

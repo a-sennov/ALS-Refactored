@@ -11,6 +11,7 @@
 #include "Net/Core/PushModel/PushModel.h"
 #include "RootMotionSources/AlsRootMotionSource_Mantling.h"
 #include "Settings/AlsCharacterSettings.h"
+#include "Settings/AlsAnimationInstanceSettings.h"
 #include "Utility/AlsConstants.h"
 #include "Utility/AlsLog.h"
 #include "Utility/AlsMacros.h"
@@ -138,6 +139,11 @@ bool AAlsCharacter::StartMantlingGrounded()
 {
 	return LocomotionMode == AlsLocomotionModeTags::Grounded &&
 	       StartMantling(Settings->Mantling.GroundedTrace);
+}
+
+bool AAlsCharacter::StartMantlingForced()
+{
+	return StartMantling(Settings->Mantling.GroundedTrace);
 }
 
 bool AAlsCharacter::StartMantlingInAir()
@@ -717,38 +723,49 @@ void AAlsCharacter::StartRagdollingImplementation()
 	{
 		return;
 	}
-
-	GetMesh()->bUpdateJointsFromAnimation = true; // Required for the flail animation to work properly.
-
-	if (!GetMesh()->IsRunningParallelEvaluation() && GetMesh()->GetBoneSpaceTransforms().Num() > 0)
+	auto* TheMesh = GetMesh();
+	if (!IsValid(TheMesh))
 	{
-		GetMesh()->UpdateRBJointMotors();
+		return;
+	}
+
+	TheMesh->bUpdateJointsFromAnimation = true; // Required for the flail animation to work properly.
+
+	if (!TheMesh->IsRunningParallelEvaluation() && TheMesh->GetBoneSpaceTransforms().Num() > 0)
+	{
+		TheMesh->UpdateRBJointMotors();
 	}
 
 	// Stop any active montages.
 
 	static constexpr auto BlendOutDuration{0.2f};
+	auto* TheAnimationInstance = Cast<UAlsAnimationInstance>(TheMesh->GetAnimInstance());
+	if (!IsValid(TheAnimationInstance))
+	{
+		return;
+	}
 
-	GetMesh()->GetAnimInstance()->Montage_Stop(BlendOutDuration);
+	TheAnimationInstance->Montage_Stop(BlendOutDuration);
 
 	// Disable movement corrections and reset network smoothing.
 
-	GetCharacterMovement()->NetworkSmoothingMode = ENetworkSmoothingMode::Disabled;
-	GetCharacterMovement()->bIgnoreClientMovementErrorChecksAndCorrection = true;
+	AlsCharacterMovement->NetworkSmoothingMode = ENetworkSmoothingMode::Disabled;
+	AlsCharacterMovement->bIgnoreClientMovementErrorChecksAndCorrection = true;
 
 	// Detach the mesh so that character transformation changes will not affect it in any way.
 
-	GetMesh()->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	TheMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
 
 	// Disable capsule collision and enable mesh physics simulation.
 
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	GetMesh()->SetCollisionObjectType(ECC_PhysicsBody);
-	GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	GetMesh()->SetSimulatePhysics(true);
+	TheMesh->SetCollisionObjectType(ECC_PhysicsBody);
+	TheMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	TheMesh->SetSimulatePhysics(true);
 
-	const auto* PelvisBody{GetMesh()->GetBodyInstance(UAlsConstants::PelvisBoneName())};
+	const auto& PelvisBone{ TheAnimationInstance->Settings->General.PelvisBone };
+	const auto* PelvisBody{TheMesh->GetBodyInstance(PelvisBone)};
 	FVector PelvisLocation;
 
 	FPhysicsCommand::ExecuteRead(PelvisBody->ActorHandle, [this, &PelvisLocation](const FPhysicsActorHandle& ActorHandle)
@@ -780,7 +797,7 @@ void AAlsCharacter::StartRagdollingImplementation()
 
 	// Clear the character movement mode and set the locomotion action to ragdolling.
 
-	GetCharacterMovement()->SetMovementMode(MOVE_None);
+	AlsCharacterMovement->SetMovementMode(MOVE_None);
 	AlsCharacterMovement->SetMovementModeLocked(true);
 
 	SetLocomotionAction(AlsLocomotionActionTags::Ragdolling);
@@ -849,6 +866,7 @@ void AAlsCharacter::RefreshRagdolling(const float DeltaTime)
 
 	if (!bLocallyControlled && !RagdollTargetLocation.IsZero())
 	{
+		auto* TheAnimationInstance = Cast<UAlsAnimationInstance>(GetMesh()->GetAnimInstance());
 		// Apply ragdoll location corrections.
 
 		static constexpr auto PullForce{750.0f};
@@ -858,8 +876,9 @@ void AAlsCharacter::RefreshRagdolling(const float DeltaTime)
 
 		const auto HorizontalSpeedSquared{RagdollingState.Velocity.SizeSquared2D()};
 
+		
 		const auto PullForceBoneName{
-			HorizontalSpeedSquared > FMath::Square(300.0f) ? UAlsConstants::Spine03BoneName() : UAlsConstants::PelvisBoneName()
+			(HorizontalSpeedSquared > FMath::Square(300.0f)) ? TheAnimationInstance->Settings->General.Spine03Bone : TheAnimationInstance->Settings->General.PelvisBone
 		};
 
 		auto* PullForceBody{GetMesh()->GetBodyInstance(PullForceBoneName)};

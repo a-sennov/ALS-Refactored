@@ -198,7 +198,14 @@ void UAlsCameraComponent::TickCamera(const float DeltaTime, bool bAllowLag)
 		}
 	}
 
-	const auto CameraTargetRotation{Character->GetViewRotation()};
+	const auto CameraViewRotation{ Character->GetViewRotation() };
+
+	const FRotator CameraRotationOffset{
+		GetAnimInstance()->GetCurveValue(UAlsCameraConstants::CameraRotationPitchOffsetCurveName()),
+		GetAnimInstance()->GetCurveValue(UAlsCameraConstants::CameraRotationYawOffsetCurveName()),
+		GetAnimInstance()->GetCurveValue(UAlsCameraConstants::CameraRotationRollOffsetCurveName())
+	};
+	const auto CameraTargetRotation{ CameraViewRotation + CameraRotationOffset };
 
 	const auto PreviousPivotTargetLocation{PivotTargetLocation};
 

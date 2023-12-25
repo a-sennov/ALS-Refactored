@@ -8,6 +8,7 @@
 #include "State/AlsRollingState.h"
 #include "State/AlsViewState.h"
 #include "Utility/AlsGameplayTags.h"
+#include "Notifies/AlsAnimNotify_FootstepEffects.h"
 #include "AlsCharacter.generated.h"
 
 struct FAlsMantlingParameters;
@@ -32,6 +33,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings|Als Character")
 	TObjectPtr<UAlsMovementSettings> MovementSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings|Als Character")
+	TObjectPtr<UAlsFootstepEffectsSettings> FootstepEffectsSettings;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings|Als Character|Desired State",
 		ReplicatedUsing = "OnReplicated_DesiredAiming")
@@ -483,6 +487,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ALS|Character", Meta = (ReturnDisplayName = "Success"))
 	bool StartMantlingGrounded();
 
+	UFUNCTION(BlueprintCallable, Category = "ALS|Als Character")
+	bool StartMantlingForced();
+
 private:
 	bool StartMantlingInAir();
 
@@ -589,6 +596,8 @@ private:
 	void DisplayDebugTraces(const UCanvas* Canvas, float Scale, float HorizontalLocation, float& VerticalLocation) const;
 
 	void DisplayDebugMantling(const UCanvas* Canvas, float Scale, float HorizontalLocation, float& VerticalLocation) const;
+
+	friend class UAlsAnimNotify_FootstepEffects;
 };
 
 inline const FGameplayTag& AAlsCharacter::GetViewMode() const

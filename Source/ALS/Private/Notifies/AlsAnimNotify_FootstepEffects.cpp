@@ -1,6 +1,8 @@
 #include "Notifies/AlsAnimNotify_FootstepEffects.h"
 
 #include "AlsCharacter.h"
+#include "AlsAnimationInstance.h"
+#include "Settings/AlsAnimationInstanceSettings.h"
 #include "DrawDebugHelpers.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Animation/AnimInstance.h"
@@ -11,6 +13,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "Sound/SoundBase.h"
+#include "Perception/AISense_Hearing.h"
 #include "Utility/AlsConstants.h"
 #include "Utility/AlsEnumUtility.h"
 #include "Utility/AlsMacros.h"
@@ -46,6 +49,8 @@ void UAlsFootstepEffectsSettings::PostEditChangeProperty(FPropertyChangedEvent& 
 }
 #endif
 
+FName UAlsAnimNotify_FootstepEffects::FootstepNoiseTag(TEXT("Footstep"));
+
 FString UAlsAnimNotify_FootstepEffects::GetNotifyName_Implementation() const
 {
 	TStringBuilder<64> NotifyNameBuilder;
@@ -60,12 +65,20 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 {
 	Super::Notify(Mesh, Animation, EventReference);
 
-	if (!IsValid(Mesh) || !ALS_ENSURE(IsValid(FootstepEffectsSettings)))
+	if (!IsValid(Mesh))
 	{
 		return;
 	}
 
 	const auto* Character{Cast<AAlsCharacter>(Mesh->GetOwner())};
+	if (!IsValid(Character))
+	{
+		return;
+	}
+	if (!IsValid(Character->FootstepEffectsSettings))
+	{
+		return;
+	}
 
 	if (bSkipEffectsWhenInAir && IsValid(Character) && Character->GetLocomotionMode() == AlsLocomotionModeTags::InAir)
 	{
@@ -78,31 +91,41 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 
 	const auto* World{Mesh->GetWorld()};
 	const auto MeshScale{Mesh->GetComponentScale().Z};
+	const auto* AnimationInstance{ Cast<UAlsAnimationInstance>(Mesh->GetAnimInstance()) };
+	if (!IsValid(AnimationInstance))
+	{
+		return;
+	}
 
-	const auto& FootBoneName{FootBone == EAlsFootBone::Left ? UAlsConstants::FootLeftBoneName() : UAlsConstants::FootRightBoneName()};
+	const auto& FootBoneName{FootBone == EAlsFootBone::Left ? AnimationInstance->Settings->General.FootLeftBone : AnimationInstance->Settings->General.FootRightBone };
 	const auto FootTransform{Mesh->GetSocketTransform(FootBoneName)};
 
 	const auto FootZAxis{
 		FootTransform.TransformVectorNoScale(FootBone == EAlsFootBone::Left
-			                                     ? FVector{FootstepEffectsSettings->FootLeftZAxis}
-			                                     : FVector{FootstepEffectsSettings->FootRightZAxis})
+			                                     ? FVector{Character->FootstepEffectsSettings->FootLeftZAxis}
+			                                     : FVector{Character->FootstepEffectsSettings->FootRightZAxis})
 	};
 
 	FCollisionQueryParams QueryParameters{__FUNCTION__, true, Mesh->GetOwner()};
 	QueryParameters.bReturnPhysicalMaterial = true;
 
 	FHitResult FootstepHit;
-	if (!World->LineTraceSingleByChannel(FootstepHit, FootTransform.GetLocation(),
-	                                     FootTransform.GetLocation() - FootZAxis *
-	                                     (FootstepEffectsSettings->SurfaceTraceDistance * MeshScale),
-	                                     FootstepEffectsSettings->SurfaceTraceChannel, QueryParameters))
+	if (!World->LineTraceSingleByChannel(
+		FootstepHit, 
+		FootTransform.GetLocation(),
+		FootTransform.GetLocation() - FootZAxis * (Character->FootstepEffectsSettings->SurfaceTraceDistance * MeshScale), 
+		Character->FootstepEffectsSettings->SurfaceTraceChannel, 
+		QueryParameters))
 	{
 		// As a fallback, trace down the world Z axis if the first trace didn't hit anything.
 
-		World->LineTraceSingleByChannel(FootstepHit, FootTransform.GetLocation(),
-		                                FootTransform.GetLocation() - FVector{
-			                                0.0f, 0.0f, FootstepEffectsSettings->SurfaceTraceDistance * MeshScale
-		                                }, FootstepEffectsSettings->SurfaceTraceChannel, QueryParameters);
+		World->LineTraceSingleByChannel(
+			FootstepHit, 
+			FootTransform.GetLocation(),
+		                                
+			FootTransform.GetLocation() - FVector{0.0f, 0.0f, Character->FootstepEffectsSettings->SurfaceTraceDistance * MeshScale}, 
+			Character->FootstepEffectsSettings->SurfaceTraceChannel, 
+			QueryParameters);
 	}
 
 #if ENABLE_DRAW_DEBUG
@@ -119,11 +142,11 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 	}
 
 	const auto SurfaceType{FootstepHit.PhysMaterial.IsValid() ? FootstepHit.PhysMaterial->SurfaceType.GetValue() : SurfaceType_Default};
-	const auto* EffectSettings{FootstepEffectsSettings->Effects.Find(SurfaceType)};
+	const auto* EffectSettings{Character->FootstepEffectsSettings->Effects.Find(SurfaceType)};
 
 	if (EffectSettings == nullptr)
 	{
-		for (const auto& Tuple : FootstepEffectsSettings->Effects)
+		for (const auto& Tuple : Character->FootstepEffectsSettings->Effects)
 		{
 			EffectSettings = &Tuple.Value;
 			break;
@@ -140,8 +163,8 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 	const auto FootstepRotation{
 		FRotationMatrix::MakeFromZY(FootstepHit.ImpactNormal,
 		                            FootTransform.TransformVectorNoScale(FootBone == EAlsFootBone::Left
-			                                                                 ? FVector{FootstepEffectsSettings->FootLeftYAxis}
-			                                                                 : FVector{FootstepEffectsSettings->FootRightYAxis})).ToQuat()
+			                                                                 ? FVector{ Character->FootstepEffectsSettings->FootLeftYAxis}
+			                                                                 : FVector{ Character->FootstepEffectsSettings->FootRightYAxis})).ToQuat()
 	};
 
 #if ENABLE_DRAW_DEBUG
@@ -154,12 +177,25 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 
 	if (bSpawnSound)
 	{
-		SpawnSound(Mesh, *EffectSettings, FootstepLocation, FootstepRotation);
+		auto VolumeMultiplier{ SoundVolumeMultiplier };
+
+		if (!bIgnoreFootstepSoundBlockCurve && IsValid(Mesh->GetAnimInstance()))
+		{
+			VolumeMultiplier *= 1.0f - UAlsMath::Clamp01(Mesh->GetAnimInstance()->GetCurveValue(UAlsConstants::FootstepSoundBlockCurveName()));
+		}
+
+		UAISense_Hearing::ReportNoiseEvent((UObject*)World, FootstepLocation, VolumeMultiplier, (AActor*)Character, 600.0f, FootstepNoiseTag);
+
+		SpawnSound(Mesh, *EffectSettings, FootstepLocation, FootstepRotation, VolumeMultiplier);
 	}
 
 	if (bSpawnDecal)
 	{
-		SpawnDecal(Mesh, *EffectSettings, FootstepLocation, FootstepRotation, FootstepHit, FootZAxis);
+		if ((FootstepHit.ImpactNormal | FootZAxis) >= Character->FootstepEffectsSettings->DecalSpawnAngleThresholdCos)
+		{
+			SpawnDecal(Mesh, *EffectSettings, FootstepLocation, FootstepRotation, FootstepHit, FootZAxis);
+		}
+
 	}
 
 	if (bSpawnParticleSystem)
@@ -169,15 +205,8 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 }
 
 void UAlsAnimNotify_FootstepEffects::SpawnSound(USkeletalMeshComponent* Mesh, const FAlsFootstepEffectSettings& EffectSettings,
-                                                const FVector& FootstepLocation, const FQuat& FootstepRotation) const
+                                                const FVector& FootstepLocation, const FQuat& FootstepRotation, float VolumeMultiplier) const
 {
-	auto VolumeMultiplier{SoundVolumeMultiplier};
-
-	if (!bIgnoreFootstepSoundBlockCurve && IsValid(Mesh->GetAnimInstance()))
-	{
-		VolumeMultiplier *= 1.0f - UAlsMath::Clamp01(Mesh->GetAnimInstance()->GetCurveValue(UAlsConstants::FootstepSoundBlockCurveName()));
-	}
-
 	if (!FAnimWeight::IsRelevant(VolumeMultiplier) || !IsValid(EffectSettings.Sound.LoadSynchronous()))
 	{
 		return;
@@ -222,11 +251,6 @@ void UAlsAnimNotify_FootstepEffects::SpawnDecal(USkeletalMeshComponent* Mesh, co
                                                 const FVector& FootstepLocation, const FQuat& FootstepRotation,
                                                 const FHitResult& FootstepHit, const FVector& FootZAxis) const
 {
-	if ((FootstepHit.ImpactNormal | FootZAxis) < FootstepEffectsSettings->DecalSpawnAngleThresholdCos)
-	{
-		return;
-	}
-
 	if (!IsValid(EffectSettings.DecalMaterial.LoadSynchronous()))
 	{
 		return;

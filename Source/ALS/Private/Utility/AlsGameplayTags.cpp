@@ -17,6 +17,7 @@ namespace AlsRotationModeTags
 	UE_DEFINE_GAMEPLAY_TAG(VelocityDirection, FName{TEXTVIEW("Als.RotationMode.VelocityDirection")})
 	UE_DEFINE_GAMEPLAY_TAG(ViewDirection, FName{TEXTVIEW("Als.RotationMode.ViewDirection")})
 	UE_DEFINE_GAMEPLAY_TAG(Aiming, FName{TEXTVIEW("Als.RotationMode.Aiming")})
+	UE_DEFINE_GAMEPLAY_TAG(Driven, FName{ TEXTVIEW("Als.RotationMode.Driven") })
 }
 
 namespace AlsStanceTags
@@ -47,6 +48,12 @@ namespace AlsOverlayModeTags
 	UE_DEFINE_GAMEPLAY_TAG(Binoculars, FName{TEXTVIEW("Als.OverlayMode.Binoculars")})
 	UE_DEFINE_GAMEPLAY_TAG(Box, FName{TEXTVIEW("Als.OverlayMode.Box")})
 	UE_DEFINE_GAMEPLAY_TAG(Barrel, FName{TEXTVIEW("Als.OverlayMode.Barrel")})
+	UE_DEFINE_GAMEPLAY_TAG(Knife, FName{ TEXTVIEW("Als.OverlayMode.Knife") })
+	UE_DEFINE_GAMEPLAY_TAG(Katana, FName{ TEXTVIEW("Als.OverlayMode.Katana") })
+	UE_DEFINE_GAMEPLAY_TAG(Lighter, FName{ TEXTVIEW("Als.OverlayMode.Lighter") })
+	UE_DEFINE_GAMEPLAY_TAG(Flashlight, FName{ TEXTVIEW("Als.OverlayMode.Flashlight") })
+	UE_DEFINE_GAMEPLAY_TAG(Shuriken, FName{ TEXTVIEW("Als.OverlayMode.Shuriken") })
+	UE_DEFINE_GAMEPLAY_TAG(Grenade, FName{ TEXTVIEW("Als.OverlayMode.Grenade") })
 }
 
 namespace AlsLocomotionActionTags

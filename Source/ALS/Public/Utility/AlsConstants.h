@@ -18,6 +18,9 @@ public:
 	static const FName& PelvisBoneName();
 
 	UFUNCTION(BlueprintPure, Category = "ALS|Constants|Bones", Meta = (ReturnDisplayName = "Bone Name"))
+	static const FName& DirectionSocketName();
+
+	UFUNCTION(BlueprintPure, Category = "ALS|Constants|Bones", Meta = (ReturnDisplayName = "Bone Name"))
 	static const FName& HeadBoneName();
 
 	UFUNCTION(BlueprintPure, Category = "ALS|Constants|Bones", Meta = (ReturnDisplayName = "Bone Name"))
@@ -222,6 +225,12 @@ inline const FName& UAlsConstants::RootBoneName()
 inline const FName& UAlsConstants::PelvisBoneName()
 {
 	static const FName Name{TEXTVIEW("pelvis")};
+	return Name;
+}
+
+inline const FName& UAlsConstants::DirectionSocketName()
+{
+	static const FName Name{ TEXTVIEW("direction") };
 	return Name;
 }
 

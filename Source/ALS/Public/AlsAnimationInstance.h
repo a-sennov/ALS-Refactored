@@ -321,6 +321,9 @@ public:
 
 public:
 	float GetCurveValueClamped01(const FName& CurveName) const;
+
+	friend class AAlsCharacter;
+	friend class UAlsAnimNotify_FootstepEffects;
 };
 
 inline UAlsAnimationInstanceSettings* UAlsAnimationInstance::GetSettingsUnsafe() const

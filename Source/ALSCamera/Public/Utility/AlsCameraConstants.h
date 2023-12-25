@@ -21,6 +21,15 @@ public:
 	static const FName& CameraOffsetZCurveName();
 
 	UFUNCTION(BlueprintPure, Category = "ALS|Camera Constants|Animation Curves", Meta = (ReturnDisplayName = "Curve Name"))
+	static const FName& CameraRotationPitchOffsetCurveName();
+
+	UFUNCTION(BlueprintPure, Category = "ALS|Camera Constants|Animation Curves", Meta = (ReturnDisplayName = "Curve Name"))
+	static const FName& CameraRotationYawOffsetCurveName();
+
+	UFUNCTION(BlueprintPure, Category = "ALS|Camera Constants|Animation Curves", Meta = (ReturnDisplayName = "Curve Name"))
+	static const FName& CameraRotationRollOffsetCurveName();
+
+	UFUNCTION(BlueprintPure, Category = "ALS|Camera Constants|Animation Curves", Meta = (ReturnDisplayName = "Curve Name"))
 	static const FName& PivotOffsetXCurveName();
 
 	UFUNCTION(BlueprintPure, Category = "ALS|Camera Constants|Animation Curves", Meta = (ReturnDisplayName = "Curve Name"))
@@ -74,6 +83,24 @@ inline const FName& UAlsCameraConstants::CameraOffsetYCurveName()
 inline const FName& UAlsCameraConstants::CameraOffsetZCurveName()
 {
 	static const FName Name{TEXTVIEW("CameraOffsetZ")};
+	return Name;
+}
+
+inline const FName& UAlsCameraConstants::CameraRotationPitchOffsetCurveName()
+{
+	static const FName Name{ TEXT("CameraOffsetPitch") };
+	return Name;
+}
+
+inline const FName& UAlsCameraConstants::CameraRotationYawOffsetCurveName()
+{
+	static const FName Name{ TEXT("CameraOffsetYaw") };
+	return Name;
+}
+
+inline const FName& UAlsCameraConstants::CameraRotationRollOffsetCurveName()
+{
+	static const FName Name{ TEXT("CameraOffsetRoll") };
 	return Name;
 }
 
