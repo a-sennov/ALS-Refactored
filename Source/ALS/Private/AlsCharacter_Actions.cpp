@@ -837,7 +837,7 @@ void AAlsCharacter::RefreshRagdolling(const float DeltaTime)
 	// Since we are dealing with physics here, we should not use functions such as USkinnedMeshComponent::GetSocketTransform() as
 	// they may return an incorrect result in situations like when the animation blueprint is not ticking or when URO is enabled.
 
-	const auto* PelvisBody{GetMesh()->GetBodyInstance(UAlsConstants::PelvisBoneName())};
+	const auto* PelvisBody{GetMesh()->GetBodyInstance(AnimationInstance->Settings->General.PelvisBone)};
 	FVector PelvisLocation;
 
 	FPhysicsCommand::ExecuteRead(PelvisBody->ActorHandle, [this, &PelvisLocation](const FPhysicsActorHandle& ActorHandle)
@@ -866,7 +866,6 @@ void AAlsCharacter::RefreshRagdolling(const float DeltaTime)
 
 	if (!bLocallyControlled && !RagdollTargetLocation.IsZero())
 	{
-		auto* TheAnimationInstance = Cast<UAlsAnimationInstance>(GetMesh()->GetAnimInstance());
 		// Apply ragdoll location corrections.
 
 		static constexpr auto PullForce{750.0f};
@@ -878,7 +877,7 @@ void AAlsCharacter::RefreshRagdolling(const float DeltaTime)
 
 		
 		const auto PullForceBoneName{
-			(HorizontalSpeedSquared > FMath::Square(300.0f)) ? TheAnimationInstance->Settings->General.Spine03Bone : TheAnimationInstance->Settings->General.PelvisBone
+			(HorizontalSpeedSquared > FMath::Square(300.0f)) ? AnimationInstance->Settings->General.Spine03Bone : AnimationInstance->Settings->General.PelvisBone
 		};
 
 		auto* PullForceBody{GetMesh()->GetBodyInstance(PullForceBoneName)};
@@ -1013,7 +1012,7 @@ void AAlsCharacter::StopRagdollingImplementation()
 
 	auto& FinalRagdollPose{AnimationInstance->SnapshotFinalRagdollPose()};
 
-	const auto PelvisTransform{GetMesh()->GetSocketTransform(UAlsConstants::PelvisBoneName())};
+	const auto PelvisTransform{GetMesh()->GetSocketTransform(UAlsConstants::DirectionSocketName())};
 	const auto PelvisRotation{PelvisTransform.Rotator()};
 
 	// Disable mesh physics simulation and enable capsule collision.
@@ -1068,7 +1067,7 @@ void AAlsCharacter::StopRagdollingImplementation()
 
 	const auto& ReferenceSkeleton{GetMesh()->GetSkeletalMeshAsset()->GetRefSkeleton()};
 
-	const auto PelvisBoneIndex{ReferenceSkeleton.FindBoneIndex(UAlsConstants::PelvisBoneName())};
+	const auto PelvisBoneIndex{ReferenceSkeleton.FindBoneIndex(AnimationInstance->Settings->General.PelvisBone)};
 	if (ALS_ENSURE(PelvisBoneIndex >= 0))
 	{
 		// We expect the pelvis bone to be the root bone or attached to it, so we can safely use the mesh transform here.
