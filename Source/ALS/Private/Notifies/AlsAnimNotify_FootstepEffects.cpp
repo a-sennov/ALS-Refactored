@@ -70,12 +70,16 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 		return;
 	}
 
-	const auto* Character{Cast<AAlsCharacter>(Mesh->GetOwner())};
+	auto* Character{Cast<AAlsCharacter>(Mesh->GetOwner())};
 	if (!IsValid(Character))
 	{
 		return;
 	}
 	if (!IsValid(Character->FootstepEffectsSettings))
+	{
+		return;
+	}
+	if (!Character->FootstepEffectAllowed())
 	{
 		return;
 	}

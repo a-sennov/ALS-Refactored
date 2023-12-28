@@ -578,6 +578,11 @@ private:
 
 	void LimitRagdollSpeed() const;
 
+	// Footsteps
+public:
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	bool FootstepEffectAllowed();
+
 	// Debug
 
 public:
