@@ -12,6 +12,7 @@
 #include "RootMotionSources/AlsRootMotionSource_Mantling.h"
 #include "Settings/AlsCharacterSettings.h"
 #include "Settings/AlsAnimationInstanceSettings.h"
+#include "Settings/AlsInteractSettings.h"
 #include "Utility/AlsConstants.h"
 #include "Utility/AlsLog.h"
 #include "Utility/AlsMacros.h"
@@ -1111,3 +1112,181 @@ UAnimMontage* AAlsCharacter::SelectGetUpMontage_Implementation(const bool bRagdo
 }
 
 void AAlsCharacter::OnRagdollingEnded_Implementation() {}
+
+// Interact
+
+void AAlsCharacter::StartInteract(const FName& ActionId, AActor* Actor, const float PlayRate)
+{
+	if (LocomotionMode != AlsLocomotionModeTags::Grounded)
+	{
+		return;
+	}
+	if (GetLocalRole() <= ROLE_SimulatedProxy)
+	{
+		return;
+	}
+	if (!IsInteractAllowedToStart())
+	{
+		return;
+	}
+
+	auto* InteractSettings{ SelectInteractSettings(ActionId) };
+
+	if (!ALS_ENSURE(IsValid(InteractSettings)) || !IsValid(InteractSettings->Montage))
+	{
+		return;
+	}
+
+	const auto InitialYawAngle{ UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(GetActorRotation().Yaw)) };
+	float TargetYawAngle;
+	FVector PrepositionTarget;
+
+	switch (InteractSettings->Type)
+	{
+	case EAlsPrepositionType::Exact:
+		TargetYawAngle = UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(Actor->GetActorRotation().Yaw + 180));
+		PrepositionTarget = Actor->GetActorLocation() + (Actor->GetActorForwardVector() * InteractSettings->Distance) + (Actor->GetActorRightVector() * InteractSettings->Shift) + FVector(0, 0, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+		break;
+	case EAlsPrepositionType::Facing:
+		TargetYawAngle = UE_REAL_TO_FLOAT(FRotator::NormalizeAxis((Actor->GetActorLocation() - GetActorLocation()).Rotation().Yaw));
+		PrepositionTarget = GetActorLocation() - Actor->GetActorLocation();
+		PrepositionTarget.Normalize();
+		PrepositionTarget = (PrepositionTarget * InteractSettings->Distance) + (PrepositionTarget.ToOrientationRotator().GetComponentForAxis(EAxis::Y) * InteractSettings->Shift) + Actor->GetActorLocation() + FVector(0, 0, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+		break;
+	}
+	float TargetDistance = FVector::Distance(GetActorLocation(), PrepositionTarget);
+	float PrepositionTime = FMath::Min(TargetDistance / 175.0, 0.15);
+	FVector PrepositionSpeed{ 0,0,0 };
+	if (PrepositionTime > 0.03)
+	{
+		PrepositionSpeed = (PrepositionTarget - GetActorLocation()) / PrepositionTime;
+	}
+
+	if (GetLocalRole() >= ROLE_Authority)
+	{
+		MulticastStartInteract(Actor, InteractSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle, PrepositionSpeed, PrepositionTime);
+	}
+	else
+	{
+		GetCharacterMovement()->FlushServerMoves();
+
+		StartInteractImplementation(Actor, InteractSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle, PrepositionSpeed, PrepositionTime);
+		ServerStartInteract(Actor, InteractSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle, PrepositionSpeed, PrepositionTime);
+	}
+}
+
+bool AAlsCharacter::IsInteractAllowedToStart() const
+{
+	return !LocomotionAction.IsValid();
+}
+
+UAlsInteractSettings* AAlsCharacter::SelectInteractSettings_Implementation(const FName& ActionId)
+{
+	return nullptr;
+}
+
+void AAlsCharacter::ServerStartInteract_Implementation(AActor* Actor, UAnimMontage* Montage, const float PlayRate,
+	const float InitialYawAngle, const float TargetYawAngle, const FVector& PreSpeed, float PreTime)
+{
+	if (IsInteractAllowedToStart())
+	{
+		MulticastStartInteract(Actor, Montage, PlayRate, InitialYawAngle, TargetYawAngle, PreSpeed, PreTime);
+		ForceNetUpdate();
+	}
+}
+
+void AAlsCharacter::MulticastStartInteract_Implementation(AActor* Actor, UAnimMontage* Montage, const float PlayRate,
+	const float InitialYawAngle, const float TargetYawAngle, const FVector& PreSpeed, float PreTime)
+{
+	StartInteractImplementation(Actor, Montage, PlayRate, InitialYawAngle, TargetYawAngle, PreSpeed, PreTime);
+}
+
+void AAlsCharacter::StartInteractImplementation(AActor* Actor, UAnimMontage* Montage, const float PlayRate,
+	const float InitialYawAngle, const float TargetYawAngle, const FVector& PreSpeed, float PreTime)
+{
+	if (IsInteractAllowedToStart())
+	{
+		InteractState.Actor = Actor;
+		InteractState.Montage = Montage;
+		InteractState.PlayRate = PlayRate;
+		InteractState.TargetYawAngle = TargetYawAngle;
+		InteractState.PrepositionSpeed = PreSpeed;
+		InteractState.PrepositionTimeLeft = PreTime;
+		if (PreTime == 0)
+		{
+			GetMesh()->GetAnimInstance()->Montage_Play(InteractState.Montage, InteractState.PlayRate);
+			InteractState.bMontageStarted = true;
+		}
+		else {
+			InteractState.bMontageStarted = false;
+		}
+
+		RefreshRotationInstant(InitialYawAngle);
+
+		SetLocomotionAction(AlsLocomotionActionTags::Interact);
+	}
+}
+
+void AAlsCharacter::RefreshInteract(const float DeltaTime)
+{
+	if (LocomotionAction != AlsLocomotionActionTags::Interact)
+	{
+		return;
+	}
+
+	if (InteractState.PrepositionTimeLeft > 0)
+	{
+		auto TargetRotation{ GetCharacterMovement()->UpdatedComponent->GetComponentRotation() };
+		TargetRotation.Yaw = UAlsMath::ExponentialDecayAngle(UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(TargetRotation.Yaw)), InteractState.TargetYawAngle, DeltaTime, 20.0f);
+
+//		Cast<UAlsCharacterMovementComponent>(GetMovementComponent())->PrepositionMove(InteractState.PrepositionSpeed, DeltaTime);
+		GetMovementComponent()->MoveUpdatedComponent(InteractState.PrepositionSpeed * DeltaTime, TargetRotation, false, nullptr);
+		if ((InteractState.PrepositionTimeLeft -= DeltaTime) < 0)
+			InteractState.PrepositionTimeLeft = 0;
+	}
+
+	if (!InteractState.bMontageStarted && InteractState.PrepositionTimeLeft == 0)
+	{
+		GetMesh()->GetAnimInstance()->Montage_Play(InteractState.Montage, InteractState.PlayRate);
+		InteractState.bMontageStarted = true;
+	}
+
+//	if (GetLocalRole() <= ROLE_SimulatedProxy || GetMesh()->GetAnimInstance()->RootMotionMode <= ERootMotionMode::IgnoreRootMotion)
+//	{
+		// Refresh rolling physics here because AAlsCharacter::PhysicsRotation()
+		// won't be called on simulated proxies or with ignored root motion.
+
+//		RefreshInteractPhysics(DeltaTime);
+//	}
+}
+
+void AAlsCharacter::OnMontageNotifyBegin(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload)
+{
+	OnActionMontageNotify(NotifyName);
+}
+
+void AAlsCharacter::OnActionMontageNotify_Implementation(FName Event)
+{
+
+}
+
+// ReSharper disable once CppMemberFunctionMayBeConst
+void AAlsCharacter::RefreshInteractPhysics(const float DeltaTime)
+{
+	auto TargetRotation{ GetCharacterMovement()->UpdatedComponent->GetComponentRotation() };
+
+	if (Settings->Rolling.RotationInterpolationSpeed <= 0.0f)
+	{
+		TargetRotation.Yaw = InteractState.TargetYawAngle;
+
+		GetCharacterMovement()->MoveUpdatedComponent(FVector::ZeroVector, TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	else
+	{
+		TargetRotation.Yaw = UAlsMath::ExponentialDecayAngle(UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(TargetRotation.Yaw)),
+			InteractState.TargetYawAngle, DeltaTime,
+			Settings->Rolling.RotationInterpolationSpeed);
+
+		GetCharacterMovement()->MoveUpdatedComponent(FVector::ZeroVector, TargetRotation, false);
+	}
+}

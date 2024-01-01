@@ -6,6 +6,7 @@
 #include "State/AlsMovementBaseState.h"
 #include "State/AlsRagdollingState.h"
 #include "State/AlsRollingState.h"
+#include "State/AlsInteractState.h"
 #include "State/AlsViewState.h"
 #include "Utility/AlsGameplayTags.h"
 #include "Notifies/AlsAnimNotify_FootstepEffects.h"
@@ -18,6 +19,7 @@ class UAlsCharacterSettings;
 class UAlsMovementSettings;
 class UAlsAnimationInstance;
 class UAlsMantlingSettings;
+class UAlsInteractSettings;
 
 UCLASS(AutoExpandCategories = ("Settings|Als Character", "Settings|Als Character|Desired State", "State|Als Character"))
 class ALS_API AAlsCharacter : public ACharacter
@@ -108,6 +110,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State|Als Character", Transient)
 	FAlsRollingState RollingState;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State|Als Character", Transient)
+	FAlsInteractState InteractState;
 
 	FTimerHandle BrakingFrictionFactorResetTimer;
 
@@ -577,6 +582,38 @@ private:
 	FVector RagdollTraceGround(bool& bGrounded) const;
 
 	void LimitRagdollSpeed() const;
+
+
+	// Interaction
+public:
+	UFUNCTION(BlueprintCallable, Category = "ALS|Character")
+	void StartInteract(const FName& ActionId, AActor* Actor, float PlayRate = 1.0f);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAlsInteractSettings* SelectInteractSettings(const FName& ActionId);
+
+	bool IsInteractAllowedToStart() const;
+
+private:
+	UFUNCTION(Server, Reliable)
+	void ServerStartInteract(AActor* Actor, UAnimMontage* Montage, float PlayRate, float InitialYawAngle, float TargetYawAngle, const FVector& PreSpeed, float PreTime);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStartInteract(AActor* Actor, UAnimMontage* Montage, float PlayRate, float InitialYawAngle, float TargetYawAngle, const FVector& PreSpeed, float PreTime);
+
+	void StartInteractImplementation(AActor* Actor, UAnimMontage* Montage, float PlayRate, float InitialYawAngle, float TargetYawAngle, const FVector& PreSpeed, float PreTime);
+
+	void RefreshInteract(float DeltaTime);
+
+	void RefreshInteractPhysics(float DeltaTime);
+
+	UFUNCTION()
+	void OnMontageNotifyBegin(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload);
+
+	// Reaction on custom notifies found in anim montages
+public:
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	void OnActionMontageNotify(FName Event);
 
 	// Footsteps
 public:

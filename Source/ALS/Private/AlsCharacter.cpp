@@ -151,6 +151,8 @@ void AAlsCharacter::BeginPlay()
 
 	Super::BeginPlay();
 
+	AnimationInstance->OnPlayMontageNotifyBegin.AddDynamic(this, &AAlsCharacter::OnMontageNotifyBegin);
+
 	if (GetLocalRole() >= ROLE_AutonomousProxy)
 	{
 		// Teleportation of simulated proxies is detected differently, see
@@ -289,6 +291,7 @@ void AAlsCharacter::Tick(const float DeltaTime)
 	RefreshMantling();
 	RefreshRagdolling(DeltaTime);
 	RefreshRolling(DeltaTime);
+	RefreshInteract(DeltaTime);
 
 	Super::Tick(DeltaTime);
 

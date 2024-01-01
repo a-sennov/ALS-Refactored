@@ -769,6 +769,11 @@ void UAlsCharacterMovementComponent::ComputeFloorDist(const FVector& CapsuleLoca
 	// ReSharper restore All
 }
 
+void UAlsCharacterMovementComponent::PrepositionMove(const FVector& InVelocity, float DeltaSeconds)
+{
+	MoveAlongFloor(InVelocity, DeltaSeconds);
+}
+
 void UAlsCharacterMovementComponent::PerformMovement(const float DeltaTime)
 {
 	Super::PerformMovement(DeltaTime);

@@ -163,6 +163,7 @@ public:
 	virtual void ComputeFloorDist(const FVector& CapsuleLocation, float LineDistance, float SweepDistance, FFindFloorResult& OutFloorResult,
 	                              float SweepRadius, const FHitResult* DownwardSweepResult) const override;
 
+	virtual void PrepositionMove(const FVector& InVelocity, float DeltaSeconds);
 protected:
 	virtual void PerformMovement(float DeltaTime) override;
 
