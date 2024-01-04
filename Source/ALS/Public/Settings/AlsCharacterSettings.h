@@ -5,6 +5,8 @@
 #include "AlsRagdollingSettings.h"
 #include "AlsRollingSettings.h"
 #include "AlsViewSettings.h"
+#include "AlsParkourSettings.h"
+#include "AlsDropSettings.h"
 #include "AlsCharacterSettings.generated.h"
 
 UCLASS(Blueprintable, BlueprintType)
@@ -49,6 +51,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
 	FAlsRollingSettings Rolling;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
+	FAlsGeneralParkourSettings Parkour;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
+	FAlsGeneralDropSettings Drop;
 public:
 	UAlsCharacterSettings();
 

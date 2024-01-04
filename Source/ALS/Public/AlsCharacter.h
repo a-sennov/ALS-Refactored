@@ -7,10 +7,13 @@
 #include "State/AlsRagdollingState.h"
 #include "State/AlsRollingState.h"
 #include "State/AlsInteractState.h"
+#include "State/AlsParkourState.h"
 #include "State/AlsViewState.h"
 #include "Utility/AlsGameplayTags.h"
 #include "Notifies/AlsAnimNotify_FootstepEffects.h"
 #include "AlsCharacter.generated.h"
+
+class UMotionWarpingComponent;
 
 struct FAlsMantlingParameters;
 struct FAlsMantlingTraceSettings;
@@ -20,6 +23,7 @@ class UAlsMovementSettings;
 class UAlsAnimationInstance;
 class UAlsMantlingSettings;
 class UAlsInteractSettings;
+class UAlsParkourSettings;
 
 UCLASS(AutoExpandCategories = ("Settings|Als Character", "Settings|Als Character|Desired State", "State|Als Character"))
 class ALS_API AAlsCharacter : public ACharacter
@@ -29,6 +33,9 @@ class ALS_API AAlsCharacter : public ACharacter
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Als Character")
 	TObjectPtr<UAlsCharacterMovementComponent> AlsCharacterMovement;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Als Character")
+	TObjectPtr<UMotionWarpingComponent> AlsCharacterWarping;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings|Als Character")
 	TObjectPtr<UAlsCharacterSettings> Settings;
@@ -113,6 +120,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State|Als Character", Transient)
 	FAlsInteractState InteractState;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State|Als Character", Transient)
+	FAlsParkourState ParkourState;
 
 	FTimerHandle BrakingFrictionFactorResetTimer;
 
@@ -605,12 +615,76 @@ private:
 
 	void RefreshInteract(float DeltaTime);
 
-	void RefreshInteractPhysics(float DeltaTime);
+	// Parkour
+public:
+	UFUNCTION(BlueprintCallable, Category = "ALS|Character")
+	bool StartParkour(float PlayRate = 1.0f);
 
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAlsParkourSettings* SelectParkourSettings(float WallDistance, float RelativeWallHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAlsParkourSettings* SelectParkourTicTacSettings(float FirstWallDistance, const FVector& FirstWallNormal, bool HasSecondWall, float SecondWallDistance, float RelativeLedgeHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap);
+
+	bool IsParkourAllowedToStart() const;
+
+private:
+	UFUNCTION(Server, Reliable)
+	void ServerStartParkour(UAnimMontage* Montage, float PlayRate, float InitialYawAngle, float TargetYawAngle);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStartParkour(UAnimMontage* Montage, float PlayRate, float InitialYawAngle, float TargetYawAngle);
+
+	void StartParkourImplementation(UAnimMontage* Montage, float PlayRate, float InitialYawAngle, float TargetYawAngle);
+
+	void RefreshParkour(float DeltaTime);
+
+	struct LedgeResult
+	{
+		bool WallFound{ false };
+		bool LedgeFound{ false };
+		bool IsVault{ false };
+		bool HasOverhang{ false };
+		float DistanceToWall{ 0 };
+		float RelativeLedgeHeight{ 0 };
+		float AbsoluteLedgeHeight{ 0 };
+		float LedgeDepth{ 0 };
+		float OverhangGap{ 0 };
+		FVector WallHit;
+		FVector WallNormal;
+
+		void Reset()
+		{
+			WallFound = LedgeFound = IsVault = HasOverhang = false;
+		}
+	};
+
+	void SearchForLedge(const FVector& start, const FVector& direction, float SearchDistance, int NumTraces, LedgeResult& result);
+
+	// Drop
+public:
+	UFUNCTION(BlueprintCallable, Category = "ALS|Character")
+	bool StartDrop(float PlayRate = 1.0f);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAlsParkourSettings* SelectDropSettings(float DropDistance, bool HasOverhang, float OverhangGap);
+
+	bool IsDropAllowedToStart() const;
+
+private:
+	UFUNCTION(Server, Reliable)
+	void ServerStartDrop(UAnimMontage* Montage, float PlayRate);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStartDrop(UAnimMontage* Montage, float PlayRate);
+
+	void StartDropImplementation(UAnimMontage* Montage, float PlayRate);
+
+	// Reaction on custom notifies found in anim montages
+private:
 	UFUNCTION()
 	void OnMontageNotifyBegin(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload);
 
-	// Reaction on custom notifies found in anim montages
 public:
 	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
 	void OnActionMontageNotify(FName Event);

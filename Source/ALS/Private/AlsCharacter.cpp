@@ -10,6 +10,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
 #include "Net/Core/PushModel/PushModel.h"
+#include "MotionWarpingComponent.h"
 #include "Settings/AlsCharacterSettings.h"
 #include "Utility/AlsConstants.h"
 #include "Utility/AlsMacros.h"
@@ -43,6 +44,8 @@ AAlsCharacter::AAlsCharacter(const FObjectInitializer& ObjectInitializer) : Supe
 	}
 
 	AlsCharacterMovement = Cast<UAlsCharacterMovementComponent>(GetCharacterMovement());
+
+	AlsCharacterWarping = CreateDefaultSubobject<UMotionWarpingComponent>(TEXT("MotionWarping"));
 
 	// This will prevent the editor from combining component details with actor details.
 	// Component details can still be accessed from the actor's component hierarchy.
@@ -292,6 +295,7 @@ void AAlsCharacter::Tick(const float DeltaTime)
 	RefreshRagdolling(DeltaTime);
 	RefreshRolling(DeltaTime);
 	RefreshInteract(DeltaTime);
+	RefreshParkour(DeltaTime);
 
 	Super::Tick(DeltaTime);
 

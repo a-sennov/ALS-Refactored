@@ -9,6 +9,7 @@
 #include "Engine/NetConnection.h"
 #include "Engine/SkeletalMesh.h"
 #include "Net/Core/PushModel/PushModel.h"
+#include "MotionWarpingComponent.h"
 #include "RootMotionSources/AlsRootMotionSource_Mantling.h"
 #include "Settings/AlsCharacterSettings.h"
 #include "Settings/AlsAnimationInstanceSettings.h"
@@ -1251,15 +1252,546 @@ void AAlsCharacter::RefreshInteract(const float DeltaTime)
 		InteractState.bMontageStarted = true;
 	}
 
-//	if (GetLocalRole() <= ROLE_SimulatedProxy || GetMesh()->GetAnimInstance()->RootMotionMode <= ERootMotionMode::IgnoreRootMotion)
-//	{
-		// Refresh rolling physics here because AAlsCharacter::PhysicsRotation()
-		// won't be called on simulated proxies or with ignored root motion.
-
-//		RefreshInteractPhysics(DeltaTime);
-//	}
 }
 
+// Parkour
+
+bool AAlsCharacter::StartParkour(const float PlayRate)
+{
+	if (LocomotionMode != AlsLocomotionModeTags::Grounded)
+	{
+		return false;
+	}
+	if (GetLocalRole() <= ROLE_SimulatedProxy)
+	{
+		return false;
+	}
+	if (!IsParkourAllowedToStart())
+	{
+		return false;
+	}
+
+	const auto ActorLocation{ GetActorLocation() };
+	const auto ActorYawAngle{ UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(GetActorRotation().Yaw)) };
+
+	float ForwardTraceAngle;
+	if (LocomotionState.bHasSpeed)
+	{
+		ForwardTraceAngle = LocomotionState.bHasInput
+			? LocomotionState.VelocityYawAngle + FMath::ClampAngle(LocomotionState.InputYawAngle - LocomotionState.VelocityYawAngle, -Settings->Parkour.MaxReachAngle, Settings->Parkour.MaxReachAngle)
+			: LocomotionState.VelocityYawAngle;
+	}
+	else
+	{
+		ForwardTraceAngle = LocomotionState.bHasInput ? LocomotionState.InputYawAngle : ActorYawAngle;
+	}
+
+	const auto ForwardTraceDeltaAngle{ FRotator3f::NormalizeAxis(ForwardTraceAngle - ActorYawAngle) };
+	if (FMath::Abs(ForwardTraceDeltaAngle) > Settings->Parkour.TraceAngleThreshold)
+	{
+		UE_LOG(LogAls, Log, TEXT("ForwardTraceDeltaAngle (%f) > TraceAngleThreshold (%f)"), ForwardTraceDeltaAngle, Settings->Parkour.TraceAngleThreshold);
+		return false;
+	}
+
+	const auto ForwardTraceDirection{
+		UAlsMath::AngleToDirectionXY(ActorYawAngle + FMath::ClampAngle(ForwardTraceDeltaAngle, -Settings->Parkour.MaxReachAngle, Settings->Parkour.MaxReachAngle))
+	};
+
+#if ENABLE_DRAW_DEBUG
+	const auto bDisplayDebug{ UAlsUtility::ShouldDisplayDebugForActor(this, UAlsConstants::MantlingDebugDisplayName()) };
+#endif
+
+	const auto* Capsule{ GetCapsuleComponent() };
+	const FVector CapsuleBottomLocation{ ActorLocation.X, ActorLocation.Y, ActorLocation.Z - Capsule->GetScaledCapsuleHalfHeight()};
+
+	auto ForwardTraceStart{ CapsuleBottomLocation };
+	ForwardTraceStart.Z += Settings->Parkour.SearchTraceHeight;
+
+	LedgeResult Ledge;
+	SearchForLedge(ForwardTraceStart, ForwardTraceDirection, Settings->Parkour.SearchTraceLength, Settings->Parkour.SearchTraceCount, Ledge);
+	if (!Ledge.WallFound)
+	{
+		return false;
+	}
+	if(!Ledge.LedgeFound)
+	{
+		// Has wall but no ledge, maybe tic-tac
+		if ((Ledge.WallNormal.X * ForwardTraceDirection.X + Ledge.WallNormal.Y * ForwardTraceDirection.Y) < -FMath::Cos(FMath::DegreesToRadians(Settings->Parkour.TicTakMaxApproachAngle))) {
+			return false; // approach angle is too steep
+		}
+		auto TicTacTraceDirection{ FVector::CrossProduct(Ledge.WallNormal, FVector::UpVector) };
+		if (FVector::DotProduct(ForwardTraceDirection, TicTacTraceDirection) < 0) {
+			TicTacTraceDirection *= -1.0;
+		}
+		auto TicTacTraceStart{ Ledge.WallHit + Ledge.WallNormal * Capsule->GetScaledCapsuleRadius()};
+		TicTacTraceStart.Z = ForwardTraceStart.Z;
+
+		LedgeResult TicTacLedge;
+		SearchForLedge(TicTacTraceStart, TicTacTraceDirection, Settings->Parkour.TicTakTraceLength, Settings->Parkour.TicTacTraceCount, TicTacLedge);
+
+		auto* TicTacSettings{ 
+			SelectParkourTicTacSettings(Ledge.DistanceToWall, Ledge.WallNormal, TicTacLedge.WallFound, TicTacLedge.DistanceToWall, TicTacLedge.RelativeLedgeHeight, TicTacLedge.LedgeDepth, TicTacLedge.IsVault, TicTacLedge.HasOverhang, TicTacLedge.OverhangGap) 
+		};
+		if (!ALS_ENSURE(IsValid(TicTacSettings)) || !IsValid(TicTacSettings->Montage))
+		{
+			return false;
+		}
+
+		auto WarpJumpLocation{ Ledge.WallHit };
+		WarpJumpLocation.Z = CapsuleBottomLocation.Z;
+		auto WarpJumpDirection{ TicTacTraceDirection };
+		WarpJumpDirection.Z = 0;
+		auto WarpJumpRight{ FVector::CrossProduct(WarpJumpDirection, FVector::UpVector) };
+		WarpJumpLocation += WarpJumpDirection * TicTacSettings->JumpOffset.X + WarpJumpRight * TicTacSettings->JumpOffset.Y;
+		WarpJumpLocation.Z += TicTacSettings->JumpOffset.Z;
+		auto WarpJumpRotation{ WarpJumpDirection.Rotation() };
+
+		AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("ParkourJump") }, WarpJumpLocation, WarpJumpRotation);
+
+		if (TicTacLedge.LedgeFound)
+		{
+			auto WarpTicTacLocation{ TicTacLedge.WallHit };
+			WarpTicTacLocation.Z = TicTacLedge.AbsoluteLedgeHeight;
+			auto WarpTicTacDirection{ TicTacLedge.WallNormal * -1.0f };
+			WarpTicTacDirection.Z = 0;
+			auto WarpTicTacRight{ FVector::CrossProduct(WarpTicTacDirection, FVector::UpVector) };
+			WarpTicTacLocation += WarpTicTacDirection * TicTacSettings->VaultOffset.X + WarpTicTacRight * TicTacSettings->VaultOffset.Y;
+			WarpTicTacLocation.Z += TicTacSettings->VaultOffset.Z;
+			auto WarpTicTacRotation{ WarpTicTacDirection.Rotation() };
+
+			AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("ParkourTicTac") }, WarpTicTacLocation, WarpTicTacRotation);
+		}
+		else {
+			auto WarpTicTacLocation{ Ledge.WallHit };
+			WarpTicTacLocation.Z = CapsuleBottomLocation.Z;
+			auto WarpTicTacDirection{ TicTacTraceDirection };
+			WarpTicTacDirection.Z = 0;
+			auto WarpTicTacRight{ FVector::CrossProduct(WarpTicTacDirection, FVector::UpVector) };
+			WarpTicTacLocation += WarpTicTacDirection * TicTacSettings->VaultOffset.X + WarpTicTacRight * TicTacSettings->VaultOffset.Y;
+			WarpTicTacLocation.Z += TicTacSettings->VaultOffset.Z;
+			auto WarpTicTacRotation{ WarpTicTacDirection.Rotation() };
+
+			AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("ParkourTicTac") }, WarpTicTacLocation, WarpTicTacRotation);
+		}
+
+		const auto InitialYawAngle{ UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(GetActorRotation().Yaw)) };
+		float TargetYawAngle{ InitialYawAngle };
+
+		if (GetLocalRole() >= ROLE_Authority)
+		{
+			MulticastStartParkour(TicTacSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+		}
+		else
+		{
+			GetCharacterMovement()->FlushServerMoves();
+
+			StartParkourImplementation(TicTacSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+			ServerStartParkour(TicTacSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+		}
+		return true;
+	}
+
+	auto* ParkourSettings{ SelectParkourSettings(Ledge.DistanceToWall, Ledge.RelativeLedgeHeight, Ledge.LedgeDepth, Ledge.IsVault, Ledge.HasOverhang, Ledge.OverhangGap) };
+
+	if (!ALS_ENSURE(IsValid(ParkourSettings)) || !IsValid(ParkourSettings->Montage))
+	{
+		return false;
+	}
+
+	auto WarpJumpLocation{ Ledge.WallHit };
+	WarpJumpLocation.Z = Ledge.AbsoluteLedgeHeight;
+	auto WarpJumpDirection{ Ledge.WallNormal * -1.0f };
+	WarpJumpDirection.Z = 0;
+	auto WarpJumpRight{ FVector::CrossProduct(WarpJumpDirection, FVector::UpVector) };
+	WarpJumpLocation += WarpJumpDirection * ParkourSettings->JumpOffset.X + WarpJumpRight * ParkourSettings->JumpOffset.Y;
+	WarpJumpLocation.Z += ParkourSettings->JumpOffset.Z;
+	auto WarpJumpRotation{ WarpJumpDirection.Rotation() };
+
+	auto WarpVaultLocation{ WarpJumpLocation + WarpJumpDirection * (Ledge.LedgeDepth + ParkourSettings->VaultOffset.X) + WarpJumpRight * ParkourSettings->VaultOffset.Y};
+	WarpVaultLocation.Z += ParkourSettings->VaultOffset.Z;
+
+	auto WarpLandLocation{ WarpJumpLocation + WarpJumpDirection * (Ledge.LedgeDepth + ParkourSettings->LandOffset.X) + WarpJumpRight * ParkourSettings->LandOffset.Y };
+	WarpLandLocation.Z += ParkourSettings->LandOffset.Z;
+
+	AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("ParkourJump") }, WarpJumpLocation, WarpJumpRotation);
+	AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("ParkourVault") }, WarpVaultLocation, WarpJumpRotation);
+	AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("ParkourLand") }, WarpLandLocation, WarpJumpRotation);
+
+	const auto InitialYawAngle{ UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(GetActorRotation().Yaw)) };
+	float TargetYawAngle{ InitialYawAngle };
+
+	if (GetLocalRole() >= ROLE_Authority)
+	{
+		MulticastStartParkour(ParkourSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+	}
+	else
+	{
+		GetCharacterMovement()->FlushServerMoves();
+
+		StartParkourImplementation(ParkourSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+		ServerStartParkour(ParkourSettings->Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+	}
+	return true;
+}
+
+void AAlsCharacter::SearchForLedge(const FVector& start, const FVector& direction, float SearchDistance, int NumTraces, LedgeResult& result)
+{
+	static const FName ForwardTraceTag{ TEXT("ParkourTrace") };
+	const auto* Capsule{ GetCapsuleComponent() };
+	const auto CapsuleScale{ Capsule->GetComponentScale().Z };
+	const auto CapsuleRadius{ Capsule->GetScaledCapsuleRadius() };
+	const auto CapsuleHalfHeight{ Capsule->GetScaledCapsuleHalfHeight() };
+	const auto ActorLocation{ GetActorLocation() };
+	const FVector CapsuleBottomLocation{ ActorLocation.X, ActorLocation.Y, ActorLocation.Z - CapsuleHalfHeight };
+
+	auto ForwardTraceStart{ start };
+	auto ForwardTraceEnd{ ForwardTraceStart + direction * SearchDistance };
+
+	FCollisionQueryParams TraceQueryParams(ForwardTraceTag, true, this);
+
+	UPrimitiveComponent* WallPrimitive{ nullptr };
+
+	result.Reset();
+
+	for (int i = 0; i < NumTraces; ++i)
+	{
+		FHitResult ForwardTraceHit;
+
+		// we search for wall
+		if (GetWorld()->LineTraceSingleByChannel(ForwardTraceHit, ForwardTraceStart, ForwardTraceEnd, Settings->Parkour.TraceChannel, TraceQueryParams))
+		{
+			if (WallPrimitive)
+			{
+				// some wall found already, check if this is ledge or new wall
+				if (ForwardTraceHit.Distance - result.DistanceToWall > CapsuleRadius)
+				{
+					// this is ledge
+					result.LedgeDepth = ForwardTraceHit.Distance - result.DistanceToWall; // first estimation of ledge depth
+					result.LedgeFound = true;
+					break;
+				}
+			}
+			// possible wall found
+			auto* TargetPrimitive{ ForwardTraceHit.GetComponent() };
+			if (ForwardTraceHit.IsValidBlockingHit()) {
+				// good candidate
+				WallPrimitive = TargetPrimitive;
+				result.WallHit = ForwardTraceHit.Location;
+				result.WallNormal = ForwardTraceHit.Normal;
+				result.DistanceToWall = ForwardTraceHit.Distance;
+				result.WallFound = true;
+			}
+		}
+		else {
+			if (WallPrimitive)
+			{
+				// had some wall this is deep gap
+				result.LedgeFound = true;
+				break;
+			}
+		}
+
+		ForwardTraceStart.Z += Settings->Parkour.SearchTraceInterval;
+		ForwardTraceEnd.Z += Settings->Parkour.SearchTraceInterval;
+	}
+
+	if (!result.WallFound || !result.LedgeFound)
+	{
+		return; // no wall or wall without ledge
+	}
+
+	auto DownTraceStart{ result.WallHit };
+	DownTraceStart.Z = ForwardTraceStart.Z;
+	DownTraceStart += direction * Settings->Parkour.SearchTraceInterval;
+	auto DownTraceEnd{ DownTraceStart };
+	DownTraceEnd.Z -= Settings->Parkour.SearchTraceInterval;
+	FHitResult DownTraceHit;
+
+	GetWorld()->LineTraceSingleByChannel(DownTraceHit, DownTraceStart, DownTraceEnd, Settings->Parkour.TraceChannel, TraceQueryParams);
+	if (!DownTraceHit.IsValidBlockingHit()) 
+	{
+		// something wrong
+		UE_LOG(LogAls, Log, TEXT("Downtrace didn't hit anything."));
+		return;
+	}
+	auto* TargetPrimitive{ DownTraceHit.GetComponent() };
+	if (!IsValid(TargetPrimitive) || !TargetPrimitive->CanCharacterStepUp(this))
+	{
+		// Found some ledge but cannot step on it, cancel move
+		result.LedgeFound = false;
+		return;
+	}
+
+	auto UpTraceStart{ result.WallHit };
+	UpTraceStart.Z = ForwardTraceStart.Z;
+	UpTraceStart += direction * Settings->Parkour.SearchTraceInterval;
+	auto UpTraceEnd{ UpTraceStart };
+	UpTraceEnd.Z += CapsuleHalfHeight * 2.0f;
+	FHitResult UpTraceHit;
+
+	result.HasOverhang = GetWorld()->LineTraceSingleByChannel(UpTraceHit, UpTraceStart, UpTraceEnd, Settings->Parkour.TraceChannel, TraceQueryParams);
+
+	auto VaultDetectionDistance = DownTraceHit.Distance + Settings->Parkour.MinVaultBackHeight;
+	auto VaultTraceStart{ DownTraceStart };
+	VaultTraceStart.Z += 10.0f;
+	auto VaultTraceEnd{ DownTraceEnd };
+	VaultTraceEnd.Z = CapsuleBottomLocation.Z;
+	auto VaultTraceStep{ result.WallNormal * (-Settings->Parkour.VaultTraceInterval) };
+
+	const auto CollisionShape{ FCollisionShape::MakeSphere(Settings->Parkour.VaultTraceInterval * 0.5f) };
+
+	for (int i = 0; i < Settings->Parkour.VaultTraceCount; ++i)
+	{
+		FHitResult VaultTraceHit;
+		if (!GetWorld()->SweepSingleByChannel(VaultTraceHit, VaultTraceStart, VaultTraceEnd, FQuat::Identity, Settings->Parkour.TraceChannel, CollisionShape, TraceQueryParams))
+		{
+			result.IsVault = true;
+			break;
+		}
+		if (VaultTraceHit.bStartPenetrating)
+		{
+			// some obstacle found
+			break;
+		}
+		if (VaultTraceHit.IsValidBlockingHit()) {
+			if (VaultTraceHit.Distance >= VaultDetectionDistance)
+			{
+				result.IsVault = true;
+				break;
+			}
+		}
+		VaultTraceStart += VaultTraceStep;
+		VaultTraceEnd += VaultTraceStep;
+	}
+
+	result.RelativeLedgeHeight = UE_REAL_TO_FLOAT(DownTraceHit.Location.Z - CapsuleBottomLocation.Z);
+	result.AbsoluteLedgeHeight = UE_REAL_TO_FLOAT(DownTraceHit.Location.Z);
+	result.LedgeDepth = FMath::Min(result.LedgeDepth, UE_REAL_TO_FLOAT(FVector::Dist2D(VaultTraceStart, result.WallHit)));
+	result.OverhangGap = result.HasOverhang ? UE_REAL_TO_FLOAT(UpTraceHit.Distance + DownTraceHit.Distance) : 0.0f;
+}
+
+bool AAlsCharacter::IsParkourAllowedToStart() const
+{
+	return !LocomotionAction.IsValid();
+}
+
+UAlsParkourSettings* AAlsCharacter::SelectParkourSettings_Implementation(float WallDistance, float RelativeWallHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap)
+{
+	return nullptr;
+}
+
+UAlsParkourSettings* AAlsCharacter::SelectParkourTicTacSettings_Implementation(float FirstWallDistance, const FVector& FirstWallNormal, bool HasSecondWall, float SecondWallDistance, float RelativeLedgeHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap)
+{
+	return nullptr;
+}
+
+void AAlsCharacter::ServerStartParkour_Implementation(UAnimMontage* Montage, const float PlayRate, const float InitialYawAngle, const float TargetYawAngle)
+{
+	if (IsParkourAllowedToStart())
+	{
+		MulticastStartParkour(Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+		ForceNetUpdate();
+	}
+}
+
+void AAlsCharacter::MulticastStartParkour_Implementation(UAnimMontage* Montage, const float PlayRate, const float InitialYawAngle, const float TargetYawAngle)
+{
+	StartParkourImplementation(Montage, PlayRate, InitialYawAngle, TargetYawAngle);
+}
+
+void AAlsCharacter::StartParkourImplementation(UAnimMontage* Montage, const float PlayRate, const float InitialYawAngle, const float TargetYawAngle)
+{
+	if (IsParkourAllowedToStart())
+	{
+		GetMesh()->GetAnimInstance()->Montage_Play(Montage, PlayRate);
+
+		RefreshRotationInstant(InitialYawAngle);
+		SetLocomotionAction(AlsLocomotionActionTags::Parkour);
+	}
+}
+
+void AAlsCharacter::RefreshParkour(const float DeltaTime)
+{
+	if (LocomotionAction != AlsLocomotionActionTags::Parkour)
+	{
+		return;
+	}
+
+}
+
+// Drop
+
+bool AAlsCharacter::StartDrop(float PlayRate)
+{
+	if (LocomotionMode != AlsLocomotionModeTags::Grounded)
+	{
+		return false;
+	}
+	if (GetLocalRole() <= ROLE_SimulatedProxy)
+	{
+		return false;
+	}
+	if (!IsDropAllowedToStart())
+	{
+		return false;
+	}
+
+	const auto ActorLocation{ GetActorLocation() };
+	const auto ActorYawAngle{ UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(GetActorRotation().Yaw)) };
+
+	float ForwardTraceAngle;
+	if (LocomotionState.bHasSpeed)
+	{
+		ForwardTraceAngle = LocomotionState.bHasInput
+			? LocomotionState.VelocityYawAngle + FMath::ClampAngle(LocomotionState.InputYawAngle - LocomotionState.VelocityYawAngle, -Settings->Drop.MaxReachAngle, Settings->Drop.MaxReachAngle)
+			: LocomotionState.VelocityYawAngle;
+	}
+	else
+	{
+		ForwardTraceAngle = LocomotionState.bHasInput ? LocomotionState.InputYawAngle : ActorYawAngle;
+	}
+
+	const auto ForwardTraceDeltaAngle{ FRotator3f::NormalizeAxis(ForwardTraceAngle - ActorYawAngle) };
+	if (FMath::Abs(ForwardTraceDeltaAngle) > Settings->Drop.TraceAngleThreshold)
+	{
+		UE_LOG(LogAls, Log, TEXT("ForwardTraceDeltaAngle (%f) > TraceAngleThreshold (%f)"), ForwardTraceDeltaAngle, Settings->Drop.TraceAngleThreshold);
+		return false;
+	}
+
+	const auto ForwardTraceDirection{
+		UAlsMath::AngleToDirectionXY(ActorYawAngle + FMath::ClampAngle(ForwardTraceDeltaAngle, -Settings->Drop.MaxReachAngle, Settings->Drop.MaxReachAngle))
+	};
+
+#if ENABLE_DRAW_DEBUG
+	const auto bDisplayDebug{ UAlsUtility::ShouldDisplayDebugForActor(this, UAlsConstants::MantlingDebugDisplayName()) };
+#endif
+
+	const auto* Capsule{ GetCapsuleComponent() };
+	const FVector CapsuleBottomLocation{ ActorLocation.X, ActorLocation.Y, ActorLocation.Z - Capsule->GetScaledCapsuleHalfHeight() };
+
+	static const FName ForwardTraceTag{ TEXT("ParkourTrace") };
+	FCollisionQueryParams TraceQueryParams(ForwardTraceTag, true, this);
+
+	auto ForwardTraceStart{ CapsuleBottomLocation };
+	ForwardTraceStart.Z += Settings->Drop.SearchTraceHeight*0.5;
+	auto ForwardTraceEnd{ CapsuleBottomLocation };
+	ForwardTraceEnd.Z -= Settings->Drop.SearchTraceHeight*0.5;
+	auto ForwardTraceStep{ ForwardTraceDirection * Settings->Drop.SearchTraceInterval };
+
+	bool FloorFound{ false };
+	bool LedgeFound{ false };
+	float FloorHeight;
+	FHitResult TraceHit;
+
+	for (int i = 0; i < Settings->Drop.SearchTraceCount; ++i)
+	{
+		GetWorld()->LineTraceSingleByChannel(TraceHit, ForwardTraceStart, ForwardTraceEnd, Settings->Drop.TraceChannel, TraceQueryParams);
+		if (TraceHit.IsValidBlockingHit()) 
+		{
+			FloorFound = true;
+			FloorHeight = TraceHit.Location.Z;
+		}
+		else {
+			if (FloorFound) {
+				LedgeFound = true;
+				break;
+			}
+		}
+		ForwardTraceStart += ForwardTraceStep;
+		ForwardTraceEnd += ForwardTraceStep;
+		TraceHit.Reset();
+	}
+
+	if (!LedgeFound) {
+		return false;
+	}
+	FVector BackTraceStart(ForwardTraceStart.X, ForwardTraceStart.Y, FloorHeight - Settings->Drop.SearchTraceInterval * 0.5);
+	FVector BackTraceEnd{ BackTraceStart - ForwardTraceDirection * (Settings->Drop.SearchTraceInterval * 2.0) };
+
+	TraceHit.Reset();
+	GetWorld()->LineTraceSingleByChannel(TraceHit, BackTraceStart, BackTraceEnd, Settings->Drop.TraceChannel, TraceQueryParams);
+	if (!TraceHit.IsValidBlockingHit())
+	{
+		// something wrong
+		UE_LOG(LogAls, Log, TEXT("Backtrace didn't hit anything."));
+		return false;
+	}
+
+	auto WarpLocation{ TraceHit.Location };
+	WarpLocation.Z = BackTraceStart.Z;
+	auto UpTraceEnd{ WarpLocation };
+	UpTraceEnd.Z += Capsule->GetScaledCapsuleHalfHeight() * 2.0 + Settings->Drop.SearchTraceInterval;
+	auto WarpDirection{ TraceHit.Normal };
+	auto WarpDirectionRight{ FVector::CrossProduct(WarpDirection, FVector::UpVector) };
+	auto WarpRotation{ WarpDirection.Rotation() };
+
+	TraceHit.Reset();
+	GetWorld()->LineTraceSingleByChannel(TraceHit, WarpLocation, UpTraceEnd, Settings->Drop.TraceChannel, TraceQueryParams);
+	bool HasOverhang = TraceHit.IsValidBlockingHit();
+	float OverhangGap = TraceHit.Location.Z - WarpLocation.Z;
+
+	auto* ParkourSettings{ SelectDropSettings(FVector::Dist2D(TraceHit.Location, ActorLocation), HasOverhang, OverhangGap) };
+	if (!ALS_ENSURE(IsValid(ParkourSettings)) || !IsValid(ParkourSettings->Montage))
+	{
+		return false;
+	}
+
+	WarpLocation += WarpDirection * ParkourSettings->JumpOffset.X + WarpDirectionRight * ParkourSettings->JumpOffset.Y;
+	WarpLocation.Z += ParkourSettings->JumpOffset.Z;
+
+	AlsCharacterWarping->AddOrUpdateWarpTargetFromLocationAndRotation(FName{ TEXTVIEW("Drop") }, WarpLocation, WarpRotation);
+
+	if (GetLocalRole() >= ROLE_Authority)
+	{
+		MulticastStartDrop(ParkourSettings->Montage, PlayRate);
+	}
+	else
+	{
+		GetCharacterMovement()->FlushServerMoves();
+
+		StartDropImplementation(ParkourSettings->Montage, PlayRate);
+		ServerStartDrop(ParkourSettings->Montage, PlayRate);
+	}
+
+	return true;
+}
+
+UAlsParkourSettings* AAlsCharacter::SelectDropSettings_Implementation(float DropDistance, bool HasOverhang, float OverhangGap)
+{
+	return nullptr;
+}
+
+bool AAlsCharacter::IsDropAllowedToStart() const
+{
+	return !LocomotionAction.IsValid();
+}
+
+void AAlsCharacter::ServerStartDrop_Implementation(UAnimMontage* Montage, float PlayRate)
+{
+	if (IsDropAllowedToStart())
+	{
+		MulticastStartDrop(Montage, PlayRate);
+		ForceNetUpdate();
+	}
+}
+
+void AAlsCharacter::MulticastStartDrop_Implementation(UAnimMontage* Montage, float PlayRate)
+{
+	StartDropImplementation(Montage, PlayRate);
+}
+
+void AAlsCharacter::StartDropImplementation(UAnimMontage* Montage, float PlayRate)
+{
+	if (IsDropAllowedToStart())
+	{
+		GetMesh()->GetAnimInstance()->Montage_Play(Montage, PlayRate);
+
+		SetLocomotionAction(AlsLocomotionActionTags::Drop);
+	}
+}
+
+
+// Montage notifies handling is routed to blueprints
 void AAlsCharacter::OnMontageNotifyBegin(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload)
 {
 	OnActionMontageNotify(NotifyName);
@@ -1268,25 +1800,4 @@ void AAlsCharacter::OnMontageNotifyBegin(FName NotifyName, const FBranchingPoint
 void AAlsCharacter::OnActionMontageNotify_Implementation(FName Event)
 {
 
-}
-
-// ReSharper disable once CppMemberFunctionMayBeConst
-void AAlsCharacter::RefreshInteractPhysics(const float DeltaTime)
-{
-	auto TargetRotation{ GetCharacterMovement()->UpdatedComponent->GetComponentRotation() };
-
-	if (Settings->Rolling.RotationInterpolationSpeed <= 0.0f)
-	{
-		TargetRotation.Yaw = InteractState.TargetYawAngle;
-
-		GetCharacterMovement()->MoveUpdatedComponent(FVector::ZeroVector, TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
-	}
-	else
-	{
-		TargetRotation.Yaw = UAlsMath::ExponentialDecayAngle(UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(TargetRotation.Yaw)),
-			InteractState.TargetYawAngle, DeltaTime,
-			Settings->Rolling.RotationInterpolationSpeed);
-
-		GetCharacterMovement()->MoveUpdatedComponent(FVector::ZeroVector, TargetRotation, false);
-	}
 }
