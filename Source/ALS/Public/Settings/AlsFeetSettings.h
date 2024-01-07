@@ -56,6 +56,9 @@ struct ALS_API FAlsFeetSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ALS", Meta = (ClampMin = 0, ForceUnits = "cm"))
 	float FootHeight{13.5f};
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ALS", Meta = (ForceUnits = "cm"))
+	float PelvisOffset{ 0.0f };
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ALS")
 	TEnumAsByte<ECollisionChannel> IkTraceChannel{ECC_Visibility};
 

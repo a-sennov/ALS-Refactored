@@ -929,11 +929,9 @@ void UAlsAnimationInstance::RefreshFeet(const float DeltaTime)
 	RefreshFoot(FeetState.Right, UAlsConstants::FootRightIkCurveName(), UAlsConstants::FootRightLockCurveName(),
 	            Settings->Feet.RightFootLimits, ComponentTransformInverse, DeltaTime);
 
-	FeetState.MinMaxPelvisOffsetZ.X = UE_REAL_TO_FLOAT(
-		FMath::Min(FeetState.Left.OffsetTargetLocationZ, FeetState.Right.OffsetTargetLocationZ) / LocomotionState.Scale);
+	FeetState.MinMaxPelvisOffsetZ.X = UE_REAL_TO_FLOAT((FMath::Min(FeetState.Left.OffsetTargetLocationZ, FeetState.Right.OffsetTargetLocationZ) + Settings->Feet.PelvisOffset)/ LocomotionState.Scale);
 
-	FeetState.MinMaxPelvisOffsetZ.Y = UE_REAL_TO_FLOAT(
-		FMath::Max(FeetState.Left.OffsetTargetLocationZ, FeetState.Right.OffsetTargetLocationZ) / LocomotionState.Scale);
+	FeetState.MinMaxPelvisOffsetZ.Y = UE_REAL_TO_FLOAT((FMath::Max(FeetState.Left.OffsetTargetLocationZ, FeetState.Right.OffsetTargetLocationZ) + Settings->Feet.PelvisOffset)/ LocomotionState.Scale);
 }
 
 void UAlsAnimationInstance::RefreshFoot(FAlsFootState& FootState, const FName& FootIkCurveName,
@@ -1219,7 +1217,7 @@ void UAlsAnimationInstance::RefreshFootOffset(FAlsFootState& FootState, const fl
 		const auto SlopeAngleCos{UE_REAL_TO_FLOAT(Hit.ImpactNormal.Z)};
 
 		const auto FootHeight{Settings->Feet.FootHeight * LocomotionState.Scale};
-		const auto FootHeightOffset{SlopeAngleCos > UE_SMALL_NUMBER ? FootHeight / SlopeAngleCos - FootHeight : 0.0f};
+		const auto FootHeightOffset{SlopeAngleCos > UE_SMALL_NUMBER ? FootHeight * SlopeAngleCos : 0.0f};
 
 		// Find the difference between the impact location and the expected (flat) floor location.
 		// These values are offset by the foot height to get better behavior on sloped surfaces.
