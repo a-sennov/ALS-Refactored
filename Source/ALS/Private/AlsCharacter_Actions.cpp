@@ -1014,8 +1014,11 @@ void AAlsCharacter::StopRagdollingImplementation()
 
 	auto& FinalRagdollPose{AnimationInstance->SnapshotFinalRagdollPose()};
 
-	const auto PelvisTransform{GetMesh()->GetSocketTransform(UAlsConstants::DirectionSocketName())};
-	const auto PelvisRotation{PelvisTransform.Rotator()};
+	// Pelvis bone may have different orientation in different meshes but "direction" socket must be
+	// manually oriented to always have Y+ to point in mesh's "forward" direction and X+ to "up"
+
+	const auto PelvisTransform{ GetMesh()->GetSocketTransform(UAlsConstants::PelvisBoneName()) };
+	const auto DirectionRotation{ GetMesh()->GetSocketTransform(UAlsConstants::DirectionSocketName()).Rotator() };
 
 	// Disable mesh physics simulation and enable capsule collision.
 
@@ -1035,10 +1038,10 @@ void AAlsCharacter::StopRagdollingImplementation()
 
 	// Determine whether the ragdoll is facing upward or downward and set the actor rotation accordingly.
 
-	const auto bRagdollFacingUpward{FRotator::NormalizeAxis(PelvisRotation.Roll) <= 0.0f};
+	const auto bRagdollFacingUpward{FRotator::NormalizeAxis(DirectionRotation.Roll) <= 0.0f};
 
 	auto NewActorRotation{GetActorRotation()};
-	NewActorRotation.Yaw = bRagdollFacingUpward ? PelvisRotation.Yaw - 180.0f : PelvisRotation.Yaw;
+	NewActorRotation.Yaw = bRagdollFacingUpward ? DirectionRotation.Yaw - 180.0f : DirectionRotation.Yaw;
 
 	SetActorLocationAndRotation(NewActorLocation, NewActorRotation, false, nullptr, ETeleportType::TeleportPhysics);
 
@@ -1068,12 +1071,12 @@ void AAlsCharacter::StopRagdollingImplementation()
 	// the character and mesh transforms to keep its world transform unchanged.
 
 	const auto& ReferenceSkeleton{GetMesh()->GetSkeletalMeshAsset()->GetRefSkeleton()};
-
 	const auto PelvisBoneIndex{ReferenceSkeleton.FindBoneIndex(AnimationInstance->Settings->General.PelvisBone)};
+
 	if (ALS_ENSURE(PelvisBoneIndex >= 0))
 	{
-		// We expect the pelvis bone to be the root bone or attached to it, so we can safely use the mesh transform here.
-		FinalRagdollPose.LocalTransforms[PelvisBoneIndex] = PelvisTransform.GetRelativeTransform(GetMesh()->GetComponentTransform());
+		// We expect the pelvis bone to be attached to root bone.
+		FinalRagdollPose.LocalTransforms[PelvisBoneIndex] = PelvisTransform.GetRelativeTransform(GetMesh()->GetSocketTransform(UAlsConstants::RootBoneName()));
 	}
 
 	SetRagdollTargetLocation(FVector::ZeroVector);
