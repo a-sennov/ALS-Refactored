@@ -2,6 +2,7 @@
 
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "Engine/DataAsset.h"
+#include "Engine/AssetUserData.h"
 #include "Engine/EngineTypes.h"
 #include "AlsAnimNotify_FootstepEffects.generated.h"
 
@@ -114,6 +115,16 @@ public:
 #if WITH_EDITOR
 	void PostEditChangeProperty(const FPropertyChangedEvent& PropertyChangedEvent);
 #endif
+};
+
+UCLASS(Blueprintable, BlueprintType)
+class ALS_API UAlsEditorFootstepSettings : public UAssetUserData
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ALS")
+	TSoftObjectPtr<USoundBase> Sound;
 };
 
 UCLASS(Blueprintable, BlueprintType)

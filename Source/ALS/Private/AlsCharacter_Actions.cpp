@@ -1569,7 +1569,9 @@ void AAlsCharacter::SearchForLedge(const FVector& start, const FVector& directio
 
 	result.RelativeLedgeHeight = UE_REAL_TO_FLOAT(DownTraceHit.Location.Z - CapsuleBottomLocation.Z);
 	result.AbsoluteLedgeHeight = UE_REAL_TO_FLOAT(DownTraceHit.Location.Z);
-	result.LedgeDepth = FMath::Min(result.LedgeDepth, UE_REAL_TO_FLOAT(FVector::Dist2D(VaultTraceStart, result.WallHit)));
+	result.LedgeDepth = result.LedgeDepth > 0 ? 
+		FMath::Min(result.LedgeDepth, UE_REAL_TO_FLOAT(FVector::Dist2D(VaultTraceStart, result.WallHit))) : 
+		UE_REAL_TO_FLOAT(FVector::Dist2D(VaultTraceStart, result.WallHit));
 	result.OverhangGap = result.HasOverhang ? UE_REAL_TO_FLOAT(UpTraceHit.Distance + DownTraceHit.Distance) : 0.0f;
 }
 

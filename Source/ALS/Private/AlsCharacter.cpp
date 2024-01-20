@@ -1864,3 +1864,8 @@ bool AAlsCharacter::FootstepEffectAllowed_Implementation()
 {
 	return true;
 }
+
+void AAlsCharacter::Foley_Implementation(EAlsFoleyTypes FoleyType, float VolumeMultiplier)
+{
+
+}

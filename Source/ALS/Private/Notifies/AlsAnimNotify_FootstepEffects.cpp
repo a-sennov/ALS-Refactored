@@ -55,7 +55,7 @@ FString UAlsAnimNotify_FootstepEffects::GetNotifyName_Implementation() const
 {
 	TStringBuilder<64> NotifyNameBuilder;
 
-	NotifyNameBuilder << TEXTVIEW("Als Footstep Effects: ") << AlsEnumUtility::GetNameStringByValue(FootBone);
+	NotifyNameBuilder << TEXTVIEW("Footstep: ") << AlsEnumUtility::GetNameStringByValue(FootBone);
 
 	return FString{NotifyNameBuilder};
 }
@@ -69,10 +69,36 @@ void UAlsAnimNotify_FootstepEffects::Notify(USkeletalMeshComponent* Mesh, UAnimS
 	{
 		return;
 	}
-
 	auto* Character{Cast<AAlsCharacter>(Mesh->GetOwner())};
 	if (!IsValid(Character))
 	{
+		if (!bSpawnSound)
+		{
+			return;
+		}
+		auto MeshUserData{ Mesh->GetSkeletalMeshAsset()->GetAssetUserDataOfClass(UAlsEditorFootstepSettings::StaticClass())};
+		if (!IsValid(MeshUserData))
+		{
+			UE_LOG(LogAls, Warning, TEXT("Footsteps settings not found in mesh %s."), *(Mesh->GetName()));
+			return;
+		}
+		auto EditorFootstepsSettings{ Cast< UAlsEditorFootstepSettings >(MeshUserData) };
+		if (!IsValid(EditorFootstepsSettings->Sound.Get()))
+		{
+			if (!IsValid(EditorFootstepsSettings->Sound.LoadSynchronous()))
+			{
+				UE_LOG(LogAls, Warning, TEXT("Default footstep sound is not configured."));
+				return;
+			}
+		}
+		auto* Audio = UGameplayStatics::SpawnSound2D(Mesh->GetWorld(), EditorFootstepsSettings->Sound.Get(), SoundVolumeMultiplier);
+		if (IsValid(Audio))
+		{
+			Audio->SetIntParameter(FName{ TEXTVIEW("FootstepType") }, static_cast<int32>(SoundType));
+		} else
+		{
+			UE_LOG(LogAls, Error, TEXT("Could not spawn footstep sound in editor."));
+		}
 		return;
 	}
 	if (!IsValid(Character->FootstepEffectsSettings))

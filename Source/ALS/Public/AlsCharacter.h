@@ -11,6 +11,7 @@
 #include "State/AlsViewState.h"
 #include "Utility/AlsGameplayTags.h"
 #include "Notifies/AlsAnimNotify_FootstepEffects.h"
+#include "Notifies/AlsAnimNotify_Foley.h"
 #include "AlsCharacter.generated.h"
 
 class UMotionWarpingComponent;
@@ -693,6 +694,10 @@ public:
 public:
 	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
 	bool FootstepEffectAllowed();
+
+	// Foley
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	void Foley(EAlsFoleyTypes FoleyType, float VolumeMultiplier);
 
 	// Debug
 
