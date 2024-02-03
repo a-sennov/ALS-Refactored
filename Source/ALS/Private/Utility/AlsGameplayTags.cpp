@@ -65,6 +65,7 @@ namespace AlsLocomotionActionTags
 	UE_DEFINE_GAMEPLAY_TAG(Interact, FName{ TEXTVIEW("Als.LocomotionAction.Interact") })
 	UE_DEFINE_GAMEPLAY_TAG(Parkour, FName{ TEXTVIEW("Als.LocomotionAction.Parkour") })
 	UE_DEFINE_GAMEPLAY_TAG(Drop, FName{ TEXTVIEW("Als.LocomotionAction.Drop") })
+	UE_DEFINE_GAMEPLAY_TAG(Slide, FName{ TEXTVIEW("Als.LocomotionAction.Slide") })
 }
 
 namespace AlsGroundedEntryModeTags

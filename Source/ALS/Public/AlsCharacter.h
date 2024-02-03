@@ -622,7 +622,7 @@ public:
 	bool StartParkour(float PlayRate = 1.0f);
 
 	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
-	UAlsParkourSettings* SelectParkourSettings(float WallDistance, float RelativeWallHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap);
+	UAlsParkourSettings* SelectParkourSettings(float WallDistance, float RelativeWallHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap, bool PreferOn);
 
 	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
 	UAlsParkourSettings* SelectParkourTicTacSettings(float FirstWallDistance, const FVector& FirstWallNormal, bool HasSecondWall, float SecondWallDistance, float RelativeLedgeHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap);
@@ -653,6 +653,7 @@ private:
 		float OverhangGap{ 0 };
 		FVector WallHit;
 		FVector WallNormal;
+		UPrimitiveComponent* Wall;
 
 		void Reset()
 		{
@@ -680,6 +681,25 @@ private:
 	void MulticastStartDrop(UAnimMontage* Montage, float PlayRate);
 
 	void StartDropImplementation(UAnimMontage* Montage, float PlayRate);
+
+	// Slide
+public:
+	UFUNCTION(BlueprintCallable, Category = "ALS|Character")
+	bool StartSlide(float PlayRate = 1.0f);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAnimMontage* SelectSlideMontage();
+
+	bool IsSlideAllowedToStart() const;
+
+private:
+	UFUNCTION(Server, Reliable)
+	void ServerStartSlide(UAnimMontage* Montage, float PlayRate);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStartSlide(UAnimMontage* Montage, float PlayRate);
+
+	void StartSlideImplementation(UAnimMontage* Montage, float PlayRate);
 
 	// Reaction on custom notifies found in anim montages
 private:

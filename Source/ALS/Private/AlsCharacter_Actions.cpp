@@ -572,7 +572,7 @@ float AAlsCharacter::CalculateMantlingStartTime(const UAlsMantlingSettings* Mant
 
 	// Find the vertical distance the character has already moved.
 
-	const auto TargetLocationZ{FMath::Max(0.0f, SearchEndLocationZ - MantlingHeight)};
+	const auto TargetLocationZ{FMath::Max(SearchStartLocationZ, SearchEndLocationZ - MantlingHeight)};
 
 	// Perform a binary search to find the time when the character is at the target vertical distance.
 
@@ -1261,6 +1261,8 @@ void AAlsCharacter::RefreshInteract(const float DeltaTime)
 
 bool AAlsCharacter::StartParkour(const float PlayRate)
 {
+	static const FName OnTag{ TEXT("PK_On") }; // ignore trace to this component
+
 	if (LocomotionMode != AlsLocomotionModeTags::Grounded)
 	{
 		return false;
@@ -1394,7 +1396,14 @@ bool AAlsCharacter::StartParkour(const float PlayRate)
 		return true;
 	}
 
-	auto* ParkourSettings{ SelectParkourSettings(Ledge.DistanceToWall, Ledge.RelativeLedgeHeight, Ledge.LedgeDepth, Ledge.IsVault, Ledge.HasOverhang, Ledge.OverhangGap) };
+	auto* ParkourSettings{ SelectParkourSettings(
+		Ledge.DistanceToWall, 
+		Ledge.RelativeLedgeHeight, 
+		Ledge.LedgeDepth, 
+		Ledge.IsVault,
+		Ledge.HasOverhang, 
+		Ledge.OverhangGap,
+		Ledge.Wall->ComponentHasTag(OnTag)) };
 
 	if (!ALS_ENSURE(IsValid(ParkourSettings)) || !IsValid(ParkourSettings->Montage))
 	{
@@ -1440,6 +1449,9 @@ bool AAlsCharacter::StartParkour(const float PlayRate)
 void AAlsCharacter::SearchForLedge(const FVector& start, const FVector& direction, float SearchDistance, int NumTraces, LedgeResult& result)
 {
 	static const FName ForwardTraceTag{ TEXT("ParkourTrace") };
+	static const FName FacingTag{ TEXT("PK_Facing") }; // use the facing normal instead of wall normal
+	static const FName IgnoreTag{ TEXT("PK_Ignore") }; // ignore trace to this component
+
 	const auto* Capsule{ GetCapsuleComponent() };
 	const auto CapsuleScale{ Capsule->GetComponentScale().Z };
 	const auto CapsuleRadius{ Capsule->GetScaledCapsuleRadius() };
@@ -1450,7 +1462,7 @@ void AAlsCharacter::SearchForLedge(const FVector& start, const FVector& directio
 	auto ForwardTraceStart{ start };
 	auto ForwardTraceEnd{ ForwardTraceStart + direction * SearchDistance };
 
-	FCollisionQueryParams TraceQueryParams(ForwardTraceTag, true, this);
+	FCollisionQueryParams TraceQueryParams(ForwardTraceTag, false, this);
 
 	UPrimitiveComponent* WallPrimitive{ nullptr };
 
@@ -1476,11 +1488,22 @@ void AAlsCharacter::SearchForLedge(const FVector& start, const FVector& directio
 			}
 			// possible wall found
 			auto* TargetPrimitive{ ForwardTraceHit.GetComponent() };
+			if (TargetPrimitive->ComponentHasTag(IgnoreTag))
+			{
+				continue;
+			}
 			if (ForwardTraceHit.IsValidBlockingHit()) {
 				// good candidate
-				WallPrimitive = TargetPrimitive;
+				result.Wall = WallPrimitive = TargetPrimitive;
 				result.WallHit = ForwardTraceHit.Location;
-				result.WallNormal = ForwardTraceHit.Normal;
+				if (WallPrimitive->ComponentHasTag(FacingTag))
+				{
+					result.WallNormal = direction * (-1.0f);
+
+				} 
+				else {
+					result.WallNormal = ForwardTraceHit.Normal;
+				}
 				result.DistanceToWall = ForwardTraceHit.Distance;
 				result.WallFound = true;
 			}
@@ -1580,7 +1603,7 @@ bool AAlsCharacter::IsParkourAllowedToStart() const
 	return !LocomotionAction.IsValid();
 }
 
-UAlsParkourSettings* AAlsCharacter::SelectParkourSettings_Implementation(float WallDistance, float RelativeWallHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap)
+UAlsParkourSettings* AAlsCharacter::SelectParkourSettings_Implementation(float WallDistance, float RelativeWallHeight, float LedgeDepth, bool IsVault, bool HasOverhang, float OverhangGap, bool PreferOn)
 {
 	return nullptr;
 }
@@ -1675,7 +1698,7 @@ bool AAlsCharacter::StartDrop(float PlayRate)
 	const FVector CapsuleBottomLocation{ ActorLocation.X, ActorLocation.Y, ActorLocation.Z - Capsule->GetScaledCapsuleHalfHeight() };
 
 	static const FName ForwardTraceTag{ TEXT("ParkourTrace") };
-	FCollisionQueryParams TraceQueryParams(ForwardTraceTag, true, this);
+	FCollisionQueryParams TraceQueryParams(ForwardTraceTag, false, this);
 
 	auto ForwardTraceStart{ CapsuleBottomLocation };
 	ForwardTraceStart.Z += Settings->Drop.SearchTraceHeight*0.5;
@@ -1795,6 +1818,82 @@ void AAlsCharacter::StartDropImplementation(UAnimMontage* Montage, float PlayRat
 	}
 }
 
+
+// Slide
+
+bool AAlsCharacter::StartSlide(float PlayRate)
+{
+	if (LocomotionMode != AlsLocomotionModeTags::Grounded)
+	{
+		return false;
+	}
+	if (GetLocalRole() <= ROLE_SimulatedProxy)
+	{
+		return false;
+	}
+	if (!IsSlideAllowedToStart())
+	{
+		return false;
+	}
+
+	const auto ActorLocation{ GetActorLocation() };
+	const auto ActorYawAngle{ UE_REAL_TO_FLOAT(FRotator::NormalizeAxis(GetActorRotation().Yaw)) };
+
+	auto* SlideMontage{ SelectSlideMontage() };
+	if (!IsValid(SlideMontage))
+	{
+		return false;
+	}
+
+	if (GetLocalRole() >= ROLE_Authority)
+	{
+		MulticastStartSlide(SlideMontage, PlayRate);
+	}
+	else
+	{
+		GetCharacterMovement()->FlushServerMoves();
+
+		StartSlideImplementation(SlideMontage, PlayRate);
+		ServerStartDrop(SlideMontage, PlayRate);
+	}
+
+	return true;
+}
+
+UAnimMontage* AAlsCharacter::SelectSlideMontage_Implementation()
+{
+	return nullptr;
+}
+
+bool AAlsCharacter::IsSlideAllowedToStart() const
+{
+	return !LocomotionAction.IsValid();
+}
+
+void AAlsCharacter::ServerStartSlide_Implementation(UAnimMontage* Montage, float PlayRate)
+{
+	if (IsSlideAllowedToStart())
+	{
+		MulticastStartSlide(Montage, PlayRate);
+		ForceNetUpdate();
+	}
+}
+
+void AAlsCharacter::MulticastStartSlide_Implementation(UAnimMontage* Montage, float PlayRate)
+{
+	StartSlideImplementation(Montage, PlayRate);
+}
+
+void AAlsCharacter::StartSlideImplementation(UAnimMontage* Montage, float PlayRate)
+{
+	if (IsSlideAllowedToStart())
+	{
+		if (GetMesh()->GetAnimInstance()->Montage_Play(Montage, PlayRate)) {
+			SetLocomotionAction(AlsLocomotionActionTags::Slide);
+
+		}
+	}
+}
 
 // Montage notifies handling is routed to blueprints
 void AAlsCharacter::OnMontageNotifyBegin(FName NotifyName, const FBranchingPointNotifyPayload& BranchingPointPayload)
